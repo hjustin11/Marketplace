@@ -1,3 +1,5 @@
+import { Card, CardContent, Typography } from "@mui/material";
+
 interface KpiCardProps {
   label: string;
   value: string;
@@ -6,10 +8,20 @@ interface KpiCardProps {
 
 export function KpiCard({ label, value, helper }: KpiCardProps) {
   return (
-    <article className="kpi-card">
-      <p className="kpi-label">{label}</p>
-      <p className="kpi-value">{value}</p>
-      {helper ? <p className="kpi-helper">{helper}</p> : null}
-    </article>
+    <Card>
+      <CardContent sx={{ py: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          {label}
+        </Typography>
+        <Typography variant="h5" mt={0.5}>
+          {value}
+        </Typography>
+        {helper ? (
+          <Typography variant="caption" color="text.secondary">
+            {helper}
+          </Typography>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

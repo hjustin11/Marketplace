@@ -1,32 +1,48 @@
+import { Card, CardContent, Stack, Typography } from "@mui/material";
 import type { DailySalesPoint } from "../../types/metrics";
+import { EChart } from "./EChart";
 
 interface OrderTrendChartProps {
   points: DailySalesPoint[];
 }
 
 export function OrderTrendChart({ points }: OrderTrendChartProps) {
-  const maxOrders = Math.max(...points.map((point) => point.orders), 1);
+  const recentPoints = points.slice(-14);
+  const periodOrders = recentPoints.reduce((sum, point) => sum + point.orders, 0);
+  const labels = recentPoints.map((point) => point.date.slice(5));
+  const values = recentPoints.map((point) => point.orders);
 
   return (
-    <section className="chart-card">
-      <h3>Bestellverlauf</h3>
-      <p className="chart-subtitle">Volumen pro Tag als Fruehwarnsystem fuer Nachfrageschwankungen</p>
-      <div className="bar-list">
-        {points.slice(-10).map((point) => (
-          <div key={`orders-${point.date}`} className="bar-row">
-            <span>{point.date}</span>
-            <div className="bar-track">
-              <div
-                className="bar-fill secondary"
-                style={{
-                  width: `${(point.orders / maxOrders) * 100}%`,
-                }}
-              />
-            </div>
-            <strong>{point.orders}</strong>
-          </div>
-        ))}
-      </div>
-    </section>
+    <Card>
+      <CardContent>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
+          <Typography variant="h6">Bestellvolumen</Typography>
+          <Typography variant="body2" color="secondary.main" fontWeight={700}>
+            {periodOrders} Orders (14T)
+          </Typography>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          Transparente Balken zeigen Lastspitzen sofort.
+        </Typography>
+        <EChart
+          option={{
+            color: ["#12B981"],
+            tooltip: { trigger: "axis" },
+            grid: { left: 34, right: 10, top: 20, bottom: 30 },
+            xAxis: { type: "category", data: labels, axisTick: { show: false } },
+            yAxis: { type: "value", splitLine: { lineStyle: { color: "rgba(18,185,129,0.14)" } } },
+            series: [
+              {
+                type: "bar",
+                data: values,
+                barMaxWidth: 26,
+                itemStyle: { borderRadius: [8, 8, 0, 0] },
+              },
+            ],
+          }}
+          height={260}
+        />
+      </CardContent>
+    </Card>
   );
 }

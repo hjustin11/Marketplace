@@ -41,7 +41,7 @@ async function fetchFromSupabase(
   const { data, error } = await client
     .from("marketplace_orders")
     .select(
-      "id, marketplace_id, purchased_at, gross_amount_cents, currency, returned, buyer_city, buyer_region, buyer_postal_code, items_count",
+      "id, external_order_id, marketplace_id, purchased_at, gross_amount_cents, currency, returned, buyer_city, buyer_region, buyer_postal_code, items_count",
     )
     .eq("marketplace_id", marketplaceId)
     .gte("purchased_at", fromIso)
@@ -53,7 +53,8 @@ async function fetchFromSupabase(
   }
 
   return data.map((row) => ({
-    id: String(row.id),
+    // Show marketplace-native order number in UI (e.g. 302-2233584-2351501).
+    id: String(row.external_order_id ?? row.id),
     marketplaceId: row.marketplace_id,
     purchasedAt: row.purchased_at,
     grossAmountCents: row.gross_amount_cents,

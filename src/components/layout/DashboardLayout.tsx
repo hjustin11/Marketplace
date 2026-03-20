@@ -1,39 +1,47 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  AppBar,
+  Box,
+  Chip,
+  Container,
+  Divider,
+  Drawer,
+  FormControl,
+  InputLabel,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemText,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
+  TextField,
+  Toolbar,
+  Typography,
+  useMediaQuery,
+  useTheme,
+  type SelectChangeEvent,
+} from "@mui/material";
+import { LayoutDashboard, LineChart, Menu, Store } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type { DateRange, MarketplaceDefinition } from "../../types/marketplace";
 
-type DatePreset = "last7" | "last30" | "last90" | "thisYear" | "custom";
+type DatePreset = "today" | "last7" | "last30" | "last90" | "thisYear" | "custom";
 
 interface DashboardLayoutProps {
   marketplaces: MarketplaceDefinition[];
   selectedMarketplaceId: string;
   onMarketplaceChange: (id: string) => void;
+  isForecastSelected?: boolean;
+  onForecastSelect?: () => void;
+  isAmazonOrdersSelected?: boolean;
+  onAmazonOrdersSelect?: () => void;
   range: DateRange;
   onRangeChange: (range: DateRange) => void;
   selectedRegion: string;
   regions: string[];
   onRegionChange: (region: string) => void;
   children: ReactNode;
-}
-
-const ACCENT_PRESETS = ["#1f6feb", "#8b5cf6", "#e11d48", "#059669", "#ea580c"] as const;
-
-function hexToRgba(hex: string, alpha: number): string {
-  const normalized = hex.replace("#", "");
-  const fullHex =
-    normalized.length === 3
-      ? normalized
-          .split("")
-          .map((char) => `${char}${char}`)
-          .join("")
-      : normalized;
-  if (fullHex.length !== 6) {
-    return `rgba(31, 111, 235, ${alpha})`;
-  }
-
-  const r = Number.parseInt(fullHex.slice(0, 2), 16);
-  const g = Number.parseInt(fullHex.slice(2, 4), 16);
-  const b = Number.parseInt(fullHex.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function formatLocalDate(date: Date): string {
@@ -47,7 +55,9 @@ function getPresetRange(preset: Exclude<DatePreset, "custom">): DateRange {
   const to = new Date();
   const from = new Date(to);
 
-  if (preset === "last7") {
+  if (preset === "today") {
+    // Keep only current-day data for a true live-focused view.
+  } else if (preset === "last7") {
     from.setDate(from.getDate() - 6);
   } else if (preset === "last30") {
     from.setDate(from.getDate() - 29);
@@ -67,6 +77,10 @@ export function DashboardLayout({
   marketplaces,
   selectedMarketplaceId,
   onMarketplaceChange,
+  isForecastSelected = false,
+  onForecastSelect,
+  isAmazonOrdersSelected = false,
+  onAmazonOrdersSelect,
   range,
   onRangeChange,
   selectedRegion,
@@ -74,148 +88,172 @@ export function DashboardLayout({
   onRegionChange,
   children,
 }: DashboardLayoutProps) {
-  const [datePreset, setDatePreset] = useState<DatePreset>("last30");
-  const [accentColor, setAccentColor] = useState(() => {
-    return localStorage.getItem("dashboard.accentColor") ?? "#1f6feb";
-  });
-  const [compactMode, setCompactMode] = useState(() => {
-    return localStorage.getItem("dashboard.compactMode") === "true";
-  });
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+  const [datePreset, setDatePreset] = useState<DatePreset>("today");
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  useEffect(() => {
-    document.documentElement.style.setProperty("--accent-color", accentColor);
-    document.documentElement.style.setProperty("--accent-soft", hexToRgba(accentColor, 0.18));
-    localStorage.setItem("dashboard.accentColor", accentColor);
-  }, [accentColor]);
+  const drawerContent = (
+    <Box sx={{ width: 260, p: 2 }}>
+      <Stack direction="row" spacing={1} alignItems="center" mb={2}>
+        <Store size={16} />
+        <Typography variant="subtitle1" fontWeight={700}>
+          Marktplaetze
+        </Typography>
+      </Stack>
+      <List dense>
+        {marketplaces.map((marketplace) => {
+          const isMarketplaceActive =
+            marketplace.id === selectedMarketplaceId && !isForecastSelected && !isAmazonOrdersSelected;
+          const isAmazonGroup = marketplace.id === "amazon";
+          return (
+            <Box key={marketplace.id}>
+              <ListItemButton selected={isMarketplaceActive} onClick={() => onMarketplaceChange(marketplace.id)}>
+                <ListItemText primary={marketplace.label} secondary={marketplace.mode === "live" ? "Live" : "Mock"} />
+              </ListItemButton>
+              {isAmazonGroup && onAmazonOrdersSelect ? (
+                <ListItemButton selected={isAmazonOrdersSelected} sx={{ pl: 4 }} onClick={() => onAmazonOrdersSelect()}>
+                  <ListItemText primary="Kunden-Bestellungen" secondary="Amazon Detail" />
+                </ListItemButton>
+              ) : null}
+            </Box>
+          );
+        })}
+      </List>
+      <Divider sx={{ my: 1.5 }} />
+      <Stack direction="row" spacing={1} alignItems="center" mb={1}>
+        <LineChart size={16} />
+        <Typography variant="subtitle1" fontWeight={700}>
+          Analyse
+        </Typography>
+      </Stack>
+      {onForecastSelect ? (
+        <List dense>
+          <ListItemButton selected={isForecastSelected} onClick={() => onForecastSelect()}>
+            <ListItemText primary="Forecast" secondary="AI Forecast" />
+          </ListItemButton>
+        </List>
+      ) : null}
+    </Box>
+  );
 
-  useEffect(() => {
-    document.documentElement.dataset.density = compactMode ? "compact" : "comfortable";
-    localStorage.setItem("dashboard.compactMode", String(compactMode));
-  }, [compactMode]);
+  const handlePresetChange = (event: SelectChangeEvent<DatePreset>) => {
+    const preset = event.target.value as DatePreset;
+    setDatePreset(preset);
+    if (preset !== "custom") {
+      onRangeChange(getPresetRange(preset));
+    }
+  };
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <h1>Marketplace Dashboard</h1>
-        <p>Separater Bereich je Marktplatz</p>
-        <nav className="marketplace-nav">
-          {marketplaces.map((marketplace) => (
-            <button
-              key={marketplace.id}
-              className={marketplace.id === selectedMarketplaceId ? "active" : ""}
-              onClick={() => onMarketplaceChange(marketplace.id)}
-              type="button"
-            >
-              <span>{marketplace.label}</span>
-              <small>{marketplace.mode === "live" ? "Live" : "Mock"}</small>
-            </button>
-          ))}
-        </nav>
-        <section className="personalization-panel">
-          <h3>Personalisierung</h3>
-          <p>Farben und Dichte fuer deinen Workflow</p>
-          <div className="color-presets">
-            {ACCENT_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                className={`color-dot ${accentColor === preset ? "active" : ""}`}
-                style={{ backgroundColor: preset }}
-                onClick={() => setAccentColor(preset)}
-                aria-label={`Farbpreset ${preset}`}
-              />
-            ))}
-          </div>
-          <label>
-            Eigene Farbe
-            <input
-              type="color"
-              value={accentColor}
-              onChange={(event) => setAccentColor(event.target.value)}
-            />
-          </label>
-          <label className="compact-toggle">
-            <input
-              type="checkbox"
-              checked={compactMode}
-              onChange={(event) => setCompactMode(event.target.checked)}
-            />
-            Kompakte Ansicht
-          </label>
-        </section>
-      </aside>
-      <main className="content">
-        <header className="toolbar">
-          <label>
-            Zeitraum
-            <select
-              value={datePreset}
-              onChange={(event) => {
-                const preset = event.target.value as DatePreset;
-                setDatePreset(preset);
-                if (preset !== "custom") {
-                  onRangeChange(getPresetRange(preset));
-                }
-              }}
-            >
-              <option value="last7">Letzte 7 Tage</option>
-              <option value="last30">Letzte 30 Tage</option>
-              <option value="last90">Letzte 90 Tage</option>
-              <option value="thisYear">Dieses Jahr</option>
-              <option value="custom">Benutzerdefiniert (Von-Bis)</option>
-            </select>
-          </label>
-          {datePreset === "custom" ? (
-            <>
-              <label>
-                Von
-                <input
-                  type="date"
-                  value={range.from}
-                  onChange={(event) =>
-                    onRangeChange({
-                      from: event.target.value,
-                      to: range.to,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Bis
-                <input
-                  type="date"
-                  value={range.to}
-                  onChange={(event) =>
-                    onRangeChange({
-                      from: range.from,
-                      to: event.target.value,
-                    })
-                  }
-                />
-              </label>
-            </>
+    <Box sx={{ minHeight: "100vh" }}>
+      <AppBar
+        position="sticky"
+        elevation={0}
+        sx={{ backdropFilter: "blur(8px)", backgroundColor: "rgba(255,255,255,0.86)", borderBottom: 1, borderColor: "divider" }}
+      >
+        <Toolbar sx={{ gap: 1 }}>
+          {isMobile ? (
+            <IconButton onClick={() => setDrawerOpen(true)}>
+              <Menu size={16} />
+            </IconButton>
           ) : (
-            <p className="range-summary">
-              Zeitraum: <strong>{range.from}</strong> bis <strong>{range.to}</strong>
-            </p>
+            <LayoutDashboard size={18} />
           )}
-          <label>
-            Region
-            <select
-              value={selectedRegion}
-              onChange={(event) => onRegionChange(event.target.value)}
-            >
-              <option value="all">Alle Regionen</option>
-              {regions.map((region) => (
-                <option key={region} value={region}>
-                  {region}
-                </option>
-              ))}
-            </select>
-          </label>
-        </header>
-        {children}
-      </main>
-    </div>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6">Marketplace Intelligence Dashboard</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Modernes BI-Workspace mit Fokus auf Klarheit und Geschwindigkeit
+            </Typography>
+          </Box>
+          <Chip size="small" color="primary" label="Modern BI UI" />
+        </Toolbar>
+      </AppBar>
+
+      <Box sx={{ display: "flex", minHeight: "calc(100vh - 64px)" }}>
+        {isMobile ? (
+          <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+            {drawerContent}
+          </Drawer>
+        ) : (
+          <Drawer variant="permanent" open sx={{ width: 260, flexShrink: 0, "& .MuiDrawer-paper": { width: 260, borderRight: 1, borderColor: "divider", boxSizing: "border-box" } }}>
+            <Toolbar />
+            {drawerContent}
+          </Drawer>
+        )}
+
+        <Container maxWidth={false} sx={{ py: 3, px: { xs: 2, md: 3 } }}>
+          <Paper sx={{ p: 2.2, mb: 2.2 }}>
+            <Typography variant="subtitle1" fontWeight={700} mb={1.5}>
+              Command Center
+            </Typography>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="range-preset-label">Zeitraum</InputLabel>
+                <Select<DatePreset>
+                  labelId="range-preset-label"
+                  value={datePreset}
+                  label="Zeitraum"
+                  onChange={handlePresetChange}
+                >
+                  <MenuItem value="today">Heute (Live)</MenuItem>
+                  <MenuItem value="last7">Letzte 7 Tage</MenuItem>
+                  <MenuItem value="last30">Letzte 30 Tage</MenuItem>
+                  <MenuItem value="last90">Letzte 90 Tage</MenuItem>
+                  <MenuItem value="thisYear">Dieses Jahr</MenuItem>
+                  <MenuItem value="custom">Benutzerdefiniert</MenuItem>
+                </Select>
+              </FormControl>
+
+              {datePreset === "custom" ? (
+                <>
+                  <TextField
+                    size="small"
+                    label="Von"
+                    type="date"
+                    value={range.from}
+                    onChange={(event) => onRangeChange({ from: event.target.value, to: range.to })}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Bis"
+                    type="date"
+                    value={range.to}
+                    onChange={(event) => onRangeChange({ from: range.from, to: event.target.value })}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </>
+              ) : (
+                <Paper variant="outlined" sx={{ px: 1.5, py: 1, display: "inline-flex", alignItems: "center" }}>
+                  <Typography variant="body2">
+                    Zeitraum: <strong>{range.from}</strong> bis <strong>{range.to}</strong>
+                  </Typography>
+                </Paper>
+              )}
+
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel id="region-label">Region</InputLabel>
+                <Select
+                  labelId="region-label"
+                  value={selectedRegion}
+                  label="Region"
+                  onChange={(event) => onRegionChange(event.target.value)}
+                >
+                  <MenuItem value="all">Alle Regionen</MenuItem>
+                  {regions.map((region) => (
+                    <MenuItem key={region} value={region}>
+                      {region}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+          </Paper>
+
+          {children}
+        </Container>
+      </Box>
+    </Box>
   );
 }

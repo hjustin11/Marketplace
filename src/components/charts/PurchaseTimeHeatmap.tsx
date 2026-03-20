@@ -1,63 +1,62 @@
+import { Card, CardContent, Stack, Typography } from "@mui/material";
 import type { HourlyPurchasePoint } from "../../types/metrics";
 import { DASHBOARD_TIMEZONE } from "../../lib/kpi";
+import { EChart } from "./EChart";
 
 interface PurchaseTimeHeatmapProps {
   points: HourlyPurchasePoint[];
 }
 
-function alphaFromValue(value: number, max: number): number {
-  if (max === 0) {
-    return 0.15;
-  }
-  return 0.25 + (value / max) * 0.75;
-}
-
 export function PurchaseTimeHeatmap({ points }: PurchaseTimeHeatmapProps) {
-  const max = Math.max(...points.map((point) => point.purchases), 0);
-  const topHours = [...points]
-    .sort((a, b) => b.purchases - a.purchases)
-    .slice(0, 3)
-    .filter((point) => point.purchases > 0);
+  const topHour = [...points].sort((a, b) => b.purchases - a.purchases)[0];
 
   return (
-    <section className="chart-card">
-      <h3>Kaufzeitpunkte</h3>
-      <p className="chart-subtitle">
-        Bestellungen pro Stunde ({DASHBOARD_TIMEZONE})
-      </p>
-      <div className="heatmap-legend">
-        <span>Niedrig</span>
-        <div className="legend-gradient" />
-        <span>Hoch</span>
-      </div>
-      <div className="top-hours">
-        {topHours.length === 0 ? (
-          <span>Keine Spitzenzeiten verfuegbar</span>
-        ) : (
-          topHours.map((point) => (
-            <span key={`top-${point.hour}`} className="top-hour-chip">
-              {String(point.hour).padStart(2, "0")}:00 ({point.purchases})
-            </span>
-          ))
-        )}
-      </div>
-      <div className="hourly-rows">
-        {points.map((point) => (
-          <div key={point.hour} className="hour-row">
-            <span className="hour-label">{String(point.hour).padStart(2, "0")}:00</span>
-            <div className="hour-track">
-              <div
-                className="hour-fill"
-                style={{
-                  width: `${max === 0 ? 0 : (point.purchases / max) * 100}%`,
-                  backgroundColor: `rgba(88, 166, 255, ${alphaFromValue(point.purchases, max)})`,
-                }}
-              />
-            </div>
-            <strong className="hour-value">{point.purchases}</strong>
-          </div>
-        ))}
-      </div>
-    </section>
+    <Card>
+      <CardContent>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
+          <Typography variant="h6">Kaufzeitpunkte</Typography>
+          <Typography variant="body2" color="primary.main" fontWeight={700}>
+            {topHour ? `${String(topHour.hour).padStart(2, "0")}:00` : "n/a"}
+          </Typography>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          Bestellungen pro Stunde ({DASHBOARD_TIMEZONE})
+        </Typography>
+        <EChart
+          option={{
+            tooltip: { trigger: "axis" },
+            grid: { left: 34, right: 10, top: 12, bottom: 30 },
+            xAxis: {
+              type: "category",
+              data: points.map((point) => String(point.hour).padStart(2, "0")),
+              axisTick: { show: false },
+            },
+            yAxis: {
+              type: "value",
+              splitLine: { lineStyle: { color: "rgba(91,124,250,0.13)" } },
+            },
+            visualMap: {
+              min: 0,
+              max: Math.max(...points.map((point) => point.purchases), 1),
+              orient: "horizontal",
+              left: "center",
+              bottom: 0,
+              inRange: { color: ["#dbeafe", "#5B7CFA"] },
+              showLabel: false,
+              itemWidth: 90,
+            },
+            series: [
+              {
+                type: "bar",
+                data: points.map((point) => point.purchases),
+                barMaxWidth: 18,
+                itemStyle: { borderRadius: [8, 8, 0, 0] },
+              },
+            ],
+          }}
+          height={260}
+        />
+      </CardContent>
+    </Card>
   );
 }

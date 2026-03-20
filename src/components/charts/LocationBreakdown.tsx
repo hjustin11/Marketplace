@@ -1,3 +1,14 @@
+import {
+  Card,
+  CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@mui/material";
 import { formatCurrency } from "../../lib/kpi";
 import type { LocationPoint } from "../../types/metrics";
 
@@ -7,39 +18,45 @@ interface LocationBreakdownProps {
 
 export function LocationBreakdown({ points }: LocationBreakdownProps) {
   return (
-    <section className="chart-card">
-      <h3>Wohnort-Verteilung</h3>
-      <p className="chart-subtitle">Top Orte nach Umsatz</p>
-      <div className="location-table-wrap">
-        <table className="location-table">
-          <thead>
-            <tr>
-              <th>PLZ</th>
-              <th>Stadt</th>
-              <th>Region</th>
-              <th>Bestellungen</th>
-              <th>Umsatz</th>
-            </tr>
-          </thead>
-          <tbody>
-            {points.length === 0 ? (
-              <tr>
-                <td colSpan={5}>Keine Daten im gewählten Filter.</td>
-              </tr>
-            ) : (
-              points.map((point) => (
-                <tr key={point.key}>
-                  <td>{point.postalCode}</td>
-                  <td>{point.city}</td>
-                  <td>{point.region}</td>
-                  <td>{point.orders}</td>
-                  <td>{formatCurrency(point.revenueCents)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <Card>
+      <CardContent>
+        <Typography variant="h6" mb={0.5}>
+          Wohnort-Verteilung
+        </Typography>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          Top-Orte nach Umsatz und Bestellvolumen
+        </Typography>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>PLZ</TableCell>
+                <TableCell>Stadt</TableCell>
+                <TableCell>Region</TableCell>
+                <TableCell align="right">Bestellungen</TableCell>
+                <TableCell align="right">Umsatz</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {points.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5}>Keine Daten im gewaehlten Filter.</TableCell>
+                </TableRow>
+              ) : (
+                points.map((point) => (
+                  <TableRow key={point.key} hover>
+                    <TableCell>{point.postalCode}</TableCell>
+                    <TableCell>{point.city}</TableCell>
+                    <TableCell>{point.region}</TableCell>
+                    <TableCell align="right">{point.orders}</TableCell>
+                    <TableCell align="right">{formatCurrency(point.revenueCents)}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </CardContent>
+    </Card>
   );
 }

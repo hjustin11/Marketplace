@@ -1,3 +1,5 @@
+import { Alert, Card, CardContent, Chip, Stack, Typography } from "@mui/material";
+
 interface ActionInsight {
   id: string;
   title: string;
@@ -10,18 +12,33 @@ interface ActionInsightsProps {
 }
 
 export function ActionInsights({ insights }: ActionInsightsProps) {
+  const severityLabel: Record<ActionInsight["severity"], "error" | "warning" | "success"> = {
+    high: "error",
+    medium: "warning",
+    low: "success",
+  };
+
   return (
-    <section className="chart-card">
-      <h3>Handlungsempfehlungen</h3>
-      <p className="chart-subtitle">Automatische Schlussfolgerungen fuer schnelle Entscheidungen</p>
-      <div className="insight-list">
+    <Card>
+      <CardContent>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
+          <Typography variant="h6">Handlungsempfehlungen</Typography>
+          <Chip label={`${insights.length} Prioritaeten`} color="primary" size="small" />
+        </Stack>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          Konkrete BI-Hinweise fuer schnelle Entscheidungen.
+        </Typography>
+        <Stack gap={1}>
         {insights.map((insight) => (
-          <article key={insight.id} className={`insight-item ${insight.severity}`}>
-            <h4>{insight.title}</h4>
-            <p>{insight.detail}</p>
-          </article>
+          <Alert key={insight.id} severity={severityLabel[insight.severity]} variant="outlined">
+            <Typography variant="subtitle2" fontWeight={700}>
+              {insight.title}
+            </Typography>
+            <Typography variant="body2">{insight.detail}</Typography>
+          </Alert>
         ))}
-      </div>
-    </section>
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }
