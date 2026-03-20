@@ -37,6 +37,7 @@ function buildOrder(
     purchasedAt: date.toISOString(),
     grossAmountCents: amount,
     currency: "EUR",
+    paymentStatus: seed % 9 === 0 ? "pending" : "paid",
     returned: seed % 11 === 0,
     buyerCity: location[0],
     buyerRegion: location[1],
@@ -61,12 +62,16 @@ export function buildMockOrders(
   return orders;
 }
 
-const MOCK_STORE: Record<MarketplaceId, MarketplaceOrder[]> = {
+const MOCK_STORE: Record<string, MarketplaceOrder[]> = {
   amazon: buildMockOrders("amazon", 45, 7),
   ebay: buildMockOrders("ebay", 45, 4),
   etsy: buildMockOrders("etsy", 45, 3),
 };
 
 export function getMockOrders(marketplaceId: MarketplaceId): MarketplaceOrder[] {
-  return MOCK_STORE[marketplaceId] ?? [];
+  if (!MOCK_STORE[marketplaceId]) {
+    const dailyVolume = 3 + (Math.abs(hashFromString(marketplaceId)) % 5);
+    MOCK_STORE[marketplaceId] = buildMockOrders(marketplaceId, 45, dailyVolume);
+  }
+  return MOCK_STORE[marketplaceId];
 }

@@ -31,6 +31,8 @@ import type { MarketplaceOrder } from "../../types/marketplace";
 interface AmazonOrdersSectionProps {
   orders: MarketplaceOrder[];
   isLoading: boolean;
+  paymentView?: "all" | "pending";
+  onPaymentViewChange?: (view: "all" | "pending") => void;
 }
 
 function formatOrderDate(dateIso: string): string {
@@ -48,12 +50,22 @@ function formatOrderAmount(cents: number, currency: string): string {
   }).format(cents / 100);
 }
 
-export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionProps) {
+export function AmazonOrdersSection({
+  orders,
+  isLoading,
+  paymentView = "all",
+  onPaymentViewChange,
+}: AmazonOrdersSectionProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "purchasedAt", desc: true }]);
   const [globalFilter, setGlobalFilter] = useState("");
 
-  const tableData = useMemo(() => [...orders], [orders]);
+  const tableData = useMemo(
+    () => (paymentView === "pending" ? orders.filter((order) => order.paymentStatus === "pending") : [...orders]),
+    [orders, paymentView],
+  );
   const returnedCount = tableData.filter((order) => order.returned).length;
+  const pendingPaymentCount = tableData.filter((order) => order.paymentStatus === "pending").length;
+  const paidCount = tableData.length - pendingPaymentCount;
   const topCities = new Set(tableData.map((order) => `${order.buyerCity}, ${order.buyerRegion}`));
 
   const columns = useMemo<ColumnDef<MarketplaceOrder>[]>(
@@ -89,6 +101,16 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
       {
         accessorKey: "buyerPostalCode",
         header: "PLZ",
+      },
+      {
+        accessorKey: "paymentStatus",
+        header: "Zahlung",
+        cell: ({ row }) =>
+          row.original.paymentStatus === "pending" ? (
+            <Chip size="small" label="Offen" color="warning" variant="outlined" />
+          ) : (
+            <Chip size="small" label="Bezahlt" color="success" variant="outlined" />
+          ),
       },
       {
         accessorKey: "returned",
@@ -128,6 +150,7 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
         row.original.buyerCity,
         row.original.buyerRegion,
         row.original.buyerPostalCode,
+        row.original.paymentStatus === "pending" ? "zahlung offen" : "bezahlt",
         row.original.returned ? "retoure" : "behalten",
       ];
       return values.some((value) => String(value).toLowerCase().includes(needle));
@@ -147,7 +170,7 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
 
       <Grid container spacing={1.5}>
         <Grid size={{ xs: 12, sm: 4 }}>
-          <Card>
+          <Card sx={{ height: "100%", minHeight: 120 }}>
             <CardContent>
               <Typography variant="body2" color="text.secondary">
                 Bestellungen
@@ -157,7 +180,27 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
           </Card>
         </Grid>
         <Grid size={{ xs: 12, sm: 4 }}>
-          <Card>
+          <Card sx={{ height: "100%", minHeight: 120 }}>
+            <CardContent>
+              <Typography variant="body2" color="text.secondary">
+                Bezahlt
+              </Typography>
+              <Typography variant="h5">{paidCount}</Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 4 }}>
+          <Card sx={{ height: "100%", minHeight: 120 }}>
+            <CardContent>
+              <Typography variant="body2" color="text.secondary">
+                Zahlung offen
+              </Typography>
+              <Typography variant="h5">{pendingPaymentCount}</Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 4 }}>
+          <Card sx={{ height: "100%", minHeight: 120 }}>
             <CardContent>
               <Typography variant="body2" color="text.secondary">
                 Retouren
@@ -167,7 +210,7 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
           </Card>
         </Grid>
         <Grid size={{ xs: 12, sm: 4 }}>
-          <Card>
+          <Card sx={{ height: "100%", minHeight: 120 }}>
             <CardContent>
               <Typography variant="body2" color="text.secondary">
                 Kunden-Orte
@@ -182,7 +225,21 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
         <CardContent>
           <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} mb={1.5} spacing={1}>
             <Typography variant="h6">BI Orders Grid</Typography>
-            <Chip label={`${table.getRowModel().rows.length} Zeilen`} color="primary" />
+            <Stack direction="row" spacing={1}>
+              <Chip
+                label="Alle"
+                color={paymentView === "all" ? "primary" : "default"}
+                onClick={onPaymentViewChange ? () => onPaymentViewChange("all") : undefined}
+                clickable={Boolean(onPaymentViewChange)}
+              />
+              <Chip
+                label="Nur offen"
+                color={paymentView === "pending" ? "warning" : "default"}
+                onClick={onPaymentViewChange ? () => onPaymentViewChange("pending") : undefined}
+                clickable={Boolean(onPaymentViewChange)}
+              />
+              <Chip label={`${table.getRowModel().rows.length} Zeilen`} color="primary" />
+            </Stack>
           </Stack>
           <TextField
             fullWidth
@@ -230,11 +287,22 @@ export function AmazonOrdersSection({ orders, isLoading }: AmazonOrdersSectionPr
               <TableBody>
                 {table.getRowModel().rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7}>Keine Bestellungen fuer den aktuellen Filter vorhanden.</TableCell>
+                    <TableCell colSpan={8}>Keine Bestellungen fuer den aktuellen Filter vorhanden.</TableCell>
                   </TableRow>
                 ) : (
                   table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id} hover>
+                    <TableRow
+                      key={row.id}
+                      hover
+                      sx={
+                        row.original.paymentStatus === "pending"
+                          ? {
+                              backgroundColor: "rgba(245, 158, 11, 0.08)",
+                              "&:hover": { backgroundColor: "rgba(245, 158, 11, 0.14)" },
+                            }
+                          : undefined
+                      }
+                    >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id}>
                           {cell.column.columnDef.cell

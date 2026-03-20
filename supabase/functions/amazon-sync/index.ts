@@ -15,7 +15,7 @@ interface IncomingOrder {
 }
 
 interface SyncPayload {
-  mode?: "sync" | "manual";
+  mode?: "sync" | "manual" | "health";
   from?: string;
   to?: string;
   maxOrders?: number;
@@ -26,6 +26,10 @@ interface SyncPayload {
 interface AmazonSpApiOrder {
   AmazonOrderId: string;
   PurchaseDate: string;
+  LastUpdateDate?: string;
+  OrderStatus?: string;
+  LatestShipDate?: string;
+  EarliestShipDate?: string;
   OrderTotal?: {
     CurrencyCode?: string;
     Amount?: string;
@@ -37,6 +41,16 @@ interface AmazonSpApiOrder {
   };
   NumberOfItemsShipped?: number;
   NumberOfItemsUnshipped?: number;
+}
+
+interface SellerParticipation {
+  marketplace?: {
+    id?: string;
+  };
+  participation?: {
+    isParticipating?: boolean;
+    hasSuspendedListings?: boolean;
+  };
 }
 
 const AMAZON_TOKEN_URL = "https://api.amazon.com/auth/o2/token";
@@ -303,6 +317,129 @@ async function fetchOrdersFromAmazon(
   };
 }
 
+async function fetchOrderHealthSignals(
+  lwaAccessToken: string,
+  lookbackDays: number,
+  maxOrders = 300,
+): Promise<{
+  consideredOrders: number;
+  lateShipmentRatePct: number | null;
+  preFulfillmentCancelRatePct: number | null;
+}> {
+  const marketplaceIds = resolveMarketplaceIds();
+  const now = new Date();
+  const from = toIsoDate(lookbackDays).replace(/\.\d{3}Z$/, "Z");
+  const to = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+  const orders: AmazonSpApiOrder[] = [];
+  let nextToken: string | null = null;
+
+  while (orders.length < maxOrders) {
+    const query = new URLSearchParams();
+    if (nextToken) {
+      query.set("NextToken", nextToken);
+    } else {
+      query.set("MarketplaceIds", marketplaceIds);
+      query.set("LastUpdatedAfter", from);
+      query.set("LastUpdatedBefore", to);
+      query.set("MaxResultsPerPage", "100");
+    }
+
+    const response = await signedSpApiGet("/orders/v0/orders", query, lwaAccessToken);
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(
+        `Amazon Orders Health API Fehler (${response.status}): ${JSON.stringify(json)}`,
+      );
+    }
+
+    const pageOrders = (json?.payload?.Orders ?? []) as AmazonSpApiOrder[];
+    for (const order of pageOrders) {
+      orders.push(order);
+      if (orders.length >= maxOrders) {
+        break;
+      }
+    }
+
+    nextToken = json?.payload?.NextToken ?? null;
+    if (!nextToken) {
+      break;
+    }
+  }
+
+  if (orders.length === 0) {
+    return {
+      consideredOrders: 0,
+      lateShipmentRatePct: null,
+      preFulfillmentCancelRatePct: null,
+    };
+  }
+
+  let preFulfillmentCancelled = 0;
+  let lateShipmentOrders = 0;
+
+  for (const order of orders) {
+    const status = String(order.OrderStatus ?? "").toLowerCase();
+    const shipped = Number(order.NumberOfItemsShipped ?? 0);
+    const unshipped = Number(order.NumberOfItemsUnshipped ?? 0);
+    const latestShipDate = order.LatestShipDate ? new Date(order.LatestShipDate) : null;
+
+    if (status === "canceled" || status === "cancelled") {
+      if (shipped <= 0) {
+        preFulfillmentCancelled += 1;
+      }
+      continue;
+    }
+
+    // Proxy for late-shipment pressure: still-unshipped orders past latest ship date.
+    if (unshipped > 0 && latestShipDate && now.getTime() > latestShipDate.getTime()) {
+      lateShipmentOrders += 1;
+    }
+  }
+
+  const consideredOrders = orders.length;
+  return {
+    consideredOrders,
+    lateShipmentRatePct: (lateShipmentOrders / consideredOrders) * 100,
+    preFulfillmentCancelRatePct: (preFulfillmentCancelled / consideredOrders) * 100,
+  };
+}
+
+function toIsoDate(daysAgo: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - daysAgo);
+  return date.toISOString();
+}
+
+async function fetchSellerParticipations(
+  lwaAccessToken: string,
+): Promise<SellerParticipation[]> {
+  const response = await signedSpApiGet(
+    "/sellers/v1/marketplaceParticipations",
+    new URLSearchParams(),
+    lwaAccessToken,
+  );
+  const json = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      `Amazon Seller API Fehler (${response.status}): ${JSON.stringify(json)}`,
+    );
+  }
+  return (json?.payload ?? []) as SellerParticipation[];
+}
+
+function buildHealthScore(input: {
+  returnRatePct: number;
+  policyWarnings: number;
+  activeMarketplaces: number;
+}): number {
+  const base = 100;
+  const returnPenalty = input.returnRatePct * 2.2;
+  const warningPenalty = input.policyWarnings * 12;
+  const inactivePenalty = input.activeMarketplaces === 0 ? 20 : 0;
+  return Math.max(0, Math.min(100, Math.round(base - returnPenalty - warningPenalty - inactivePenalty)));
+}
+
 Deno.serve(async (request: Request): Promise<Response> => {
   if (request.method === "OPTIONS") {
     return new Response("ok", {
@@ -326,6 +463,119 @@ Deno.serve(async (request: Request): Promise<Response> => {
   const mode = payload.mode ?? "manual";
   let orders = payload.orders ?? [];
   let marketplaceIdsUsed = Deno.env.get("AMAZON_MARKETPLACE_ID") ?? "";
+
+  if (mode === "health") {
+    try {
+      const sinceIso = toIsoDate(30);
+      const sinceIso7 = toIsoDate(7);
+      const { data: recentOrders, error: recentOrdersError } = await supabase
+        .from("marketplace_orders")
+        .select("returned,purchased_at")
+        .eq("marketplace_id", "amazon")
+        .gte("purchased_at", sinceIso);
+
+      if (recentOrdersError) {
+        throw new Error(recentOrdersError.message);
+      }
+
+      const typedOrders = Array.isArray(recentOrders) ? recentOrders : [];
+      const orderCount = typedOrders.length;
+      const returnedCount = typedOrders
+        ? typedOrders.filter((row) => Boolean(row.returned)).length
+        : 0;
+      const orderDefectRatePct = orderCount > 0 ? (returnedCount / orderCount) * 100 : 0;
+      const recent7 = typedOrders.filter(
+        (row) =>
+          typeof row.purchased_at === "string" &&
+          new Date(row.purchased_at).getTime() >= new Date(sinceIso7).getTime(),
+      );
+      const orderDefectRate7dPct =
+        recent7.length > 0
+          ? (recent7.filter((row) => Boolean(row.returned)).length / recent7.length) * 100
+          : null;
+      const orderDefectRate30dPct = orderDefectRatePct;
+
+      let policyWarnings = 0;
+      let activeMarketplaces = 0;
+      let source: "amazon-sp-api" | "unknown" = "unknown";
+      let lateShipmentRatePct: number | null = null;
+      let preFulfillmentCancelRatePct: number | null = null;
+      let lateShipmentRate7dPct: number | null = null;
+      let lateShipmentRate30dPct: number | null = null;
+      let preFulfillmentCancelRate7dPct: number | null = null;
+      let preFulfillmentCancelRate30dPct: number | null = null;
+
+      try {
+        const lwaAccessToken = await getLwaAccessToken();
+        const participations = await fetchSellerParticipations(lwaAccessToken);
+        const orderSignals30 = await fetchOrderHealthSignals(lwaAccessToken, 30);
+        const orderSignals7 = await fetchOrderHealthSignals(lwaAccessToken, 7);
+        policyWarnings = participations.filter(
+          (entry) =>
+            entry?.participation?.isParticipating === false ||
+            entry?.participation?.hasSuspendedListings === true,
+        ).length;
+        activeMarketplaces = participations.filter(
+          (entry) => entry?.participation?.isParticipating === true,
+        ).length;
+        lateShipmentRatePct = orderSignals30.lateShipmentRatePct;
+        preFulfillmentCancelRatePct = orderSignals30.preFulfillmentCancelRatePct;
+        lateShipmentRate30dPct = orderSignals30.lateShipmentRatePct;
+        preFulfillmentCancelRate30dPct = orderSignals30.preFulfillmentCancelRatePct;
+        lateShipmentRate7dPct = orderSignals7.lateShipmentRatePct;
+        preFulfillmentCancelRate7dPct = orderSignals7.preFulfillmentCancelRatePct;
+        source = "amazon-sp-api";
+      } catch {
+        // Keep fallback values from local order history only.
+      }
+
+      const score = buildHealthScore({
+        returnRatePct: orderDefectRatePct,
+        policyWarnings,
+        activeMarketplaces,
+      });
+
+      return jsonResponse(
+        {
+          score,
+          orderDefectRate: orderDefectRatePct / 100,
+          orderDefectRate7d:
+            orderDefectRate7dPct === null ? null : orderDefectRate7dPct / 100,
+          orderDefectRate30d:
+            orderDefectRate30dPct === null ? null : orderDefectRate30dPct / 100,
+          lateShipmentRate:
+            lateShipmentRatePct === null ? null : lateShipmentRatePct / 100,
+          lateShipmentRate7d:
+            lateShipmentRate7dPct === null ? null : lateShipmentRate7dPct / 100,
+          lateShipmentRate30d:
+            lateShipmentRate30dPct === null ? null : lateShipmentRate30dPct / 100,
+          preFulfillmentCancelRate:
+            preFulfillmentCancelRatePct === null
+              ? null
+              : preFulfillmentCancelRatePct / 100,
+          preFulfillmentCancelRate7d:
+            preFulfillmentCancelRate7dPct === null
+              ? null
+              : preFulfillmentCancelRate7dPct / 100,
+          preFulfillmentCancelRate30d:
+            preFulfillmentCancelRate30dPct === null
+              ? null
+              : preFulfillmentCancelRate30dPct / 100,
+          policyWarnings,
+          updatedAt: new Date().toISOString(),
+          source,
+        },
+        200,
+      );
+    } catch (error) {
+      return jsonResponse(
+        {
+          error: error instanceof Error ? error.message : "Health check failed",
+        },
+        500,
+      );
+    }
+  }
 
   if (mode === "sync") {
     if (!payload.from || !payload.to) {

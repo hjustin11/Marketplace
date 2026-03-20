@@ -19,8 +19,8 @@ export function ActionInsights({ insights }: ActionInsightsProps) {
   };
 
   return (
-    <Card>
-      <CardContent>
+    <Card sx={{ height: "100%" }}>
+      <CardContent sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
           <Typography variant="h6">Handlungsempfehlungen</Typography>
           <Chip label={`${insights.length} Prioritaeten`} color="primary" size="small" />
@@ -28,7 +28,7 @@ export function ActionInsights({ insights }: ActionInsightsProps) {
         <Typography variant="body2" color="text.secondary" mb={1.5}>
           Konkrete BI-Hinweise fuer schnelle Entscheidungen.
         </Typography>
-        <Stack gap={1}>
+        <Stack gap={1} sx={{ mt: "auto" }}>
         {insights.map((insight) => (
           <Alert key={insight.id} severity={severityLabel[insight.severity]} variant="outlined">
             <Typography variant="subtitle2" fontWeight={700}>

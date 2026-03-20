@@ -1,4 +1,4 @@
-export type MarketplaceId = "amazon" | "ebay" | "etsy";
+export type MarketplaceId = string;
 
 export type MarketplaceMode = "live" | "mock";
 
@@ -20,6 +20,7 @@ export interface MarketplaceOrder {
   purchasedAt: string;
   grossAmountCents: number;
   currency: string;
+  paymentStatus: "paid" | "pending";
   returned: boolean;
   buyerCity: string;
   buyerRegion: string;
@@ -27,7 +28,7 @@ export interface MarketplaceOrder {
   itemsCount: number;
 }
 
-export const MARKETPLACES: MarketplaceDefinition[] = [
+export const DEFAULT_MARKETPLACES: MarketplaceDefinition[] = [
   {
     id: "amazon",
     label: "Amazon",

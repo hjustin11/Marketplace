@@ -1,4 +1,4 @@
-import { Alert, Chip, Grid, Stack, Typography } from "@mui/material";
+import { Alert, Card, CardContent, Chip, Grid, Stack, Typography } from "@mui/material";
 import { useMemo } from "react";
 import { formatCurrency, formatPercent } from "../../lib/kpi";
 import { KpiCard } from "../kpi/KpiCard";
@@ -9,14 +9,20 @@ import { LocationBreakdown } from "../charts/LocationBreakdown";
 import { OrderTrendChart } from "../charts/OrderTrendChart";
 import { LocationRevenueChart } from "../charts/LocationRevenueChart";
 import { ActionInsights } from "../insights/ActionInsights";
-import type { MarketplaceDefinition } from "../../types/marketplace";
+import type { MarketplaceDefinition, MarketplaceOrder } from "../../types/marketplace";
 import type { MarketplaceMetrics } from "../../types/metrics";
+import type { AmazonSellerHealth } from "../../services/marketplaceService";
 
 interface MarketplaceSectionProps {
   marketplace: MarketplaceDefinition;
   metrics: MarketplaceMetrics;
+  orders: MarketplaceOrder[];
   dataSource: "supabase" | "mock";
   isLoading: boolean;
+  onOpenPendingPayments?: () => void;
+  visibleKpiIds: string[];
+  visibleChartIds: string[];
+  sellerHealth: AmazonSellerHealth | null;
   liveFeed: {
     isSyncing: boolean;
     lastSyncedAt: number | null;
@@ -30,8 +36,13 @@ interface MarketplaceSectionProps {
 export function MarketplaceSection({
   marketplace,
   metrics,
+  orders,
   dataSource,
   isLoading,
+  onOpenPendingPayments,
+  visibleKpiIds,
+  visibleChartIds,
+  sellerHealth,
   liveFeed,
 }: MarketplaceSectionProps) {
   const decisions = useMemo(() => {
@@ -224,6 +235,22 @@ export function MarketplaceSection({
   const topLocation = metrics.locationBreakdown[0];
   const topLocationShare =
     topLocation && metrics.revenueCents > 0 ? topLocation.revenueCents / metrics.revenueCents : 0;
+  const pendingPaymentOrders = useMemo(
+    () => orders.filter((order) => order.paymentStatus === "pending").length,
+    [orders],
+  );
+  const revenueSparkline = useMemo(
+    () => metrics.dailySales.slice(-12).map((point) => Number((point.revenueCents / 100).toFixed(2))),
+    [metrics.dailySales],
+  );
+  const ordersSparkline = useMemo(
+    () => metrics.dailySales.slice(-12).map((point) => point.orders),
+    [metrics.dailySales],
+  );
+  const hourlySparkline = useMemo(
+    () => metrics.hourlyPurchases.slice(-12).map((point) => point.purchases),
+    [metrics.hourlyPurchases],
+  );
 
   const liveFeedStatus = useMemo((): string | null => {
     if (!liveFeed) {
@@ -241,13 +268,128 @@ export function MarketplaceSection({
     return `Live-Feed aktiv · Intervall ${Math.round(liveFeed.intervalMs / 60000)} min`;
   }, [liveFeed]);
 
-  const healthScore = useMemo((): number => {
+  const fallbackHealthScore = useMemo((): number => {
     const scoreBase = 100;
     const trendPenalty = Math.max(0, -metrics.revenueDeltaPct) * 35;
     const returnPenalty = metrics.returnRate * 180;
     const score = Math.round(Math.max(0, Math.min(100, scoreBase - trendPenalty - returnPenalty)));
     return score;
   }, [metrics.revenueDeltaPct, metrics.returnRate]);
+  const effectiveHealthScore =
+    marketplace.id === "amazon" && typeof sellerHealth?.score === "number"
+      ? Math.round(sellerHealth.score)
+      : fallbackHealthScore;
+  const amazonHealthDetail = useMemo(() => {
+    if (marketplace.id !== "amazon" || !sellerHealth) {
+      return null;
+    }
+
+    type HealthItem = {
+      id: string;
+      label: string;
+      value: number | null;
+      threshold: number;
+      unit: "%";
+    };
+
+    const checks: HealthItem[] = [
+      {
+        id: "odr",
+        label: "Order Defect Rate",
+        value: sellerHealth.orderDefectRatePct,
+        threshold: 1,
+        unit: "%",
+      },
+      {
+        id: "lsr",
+        label: "Late Shipment Rate",
+        value: sellerHealth.lateShipmentRatePct,
+        threshold: 4,
+        unit: "%",
+      },
+      {
+        id: "cancel",
+        label: "Pre-fulfillment Cancel Rate",
+        value: sellerHealth.preFulfillmentCancelRatePct,
+        threshold: 2.5,
+        unit: "%",
+      },
+    ];
+
+    const withStatus = checks.map((check) => {
+      if (check.value === null) {
+        return { ...check, status: "unknown" as const };
+      }
+      if (check.value <= check.threshold) {
+        return { ...check, status: "good" as const };
+      }
+      if (check.value <= check.threshold * 1.25) {
+        return { ...check, status: "warning" as const };
+      }
+      return { ...check, status: "critical" as const };
+    });
+
+    const criticalCount = withStatus.filter((item) => item.status === "critical").length;
+    const warningCount = withStatus.filter((item) => item.status === "warning").length;
+    const unknownCount = withStatus.filter((item) => item.status === "unknown").length;
+
+    const status: "success" | "warning" | "error" =
+      criticalCount > 0 ? "error" : warningCount > 0 ? "warning" : "success";
+    const headline =
+      criticalCount > 0
+        ? "Sofortige Korrektur noetig"
+        : warningCount > 0
+          ? "Leichte Risiko-Signale"
+          : "Amazon Account Health stabil";
+
+    const actions: string[] = [];
+    const odr = withStatus.find((item) => item.id === "odr");
+    const lsr = withStatus.find((item) => item.id === "lsr");
+    const cancel = withStatus.find((item) => item.id === "cancel");
+
+    const trendById: Record<string, number | null> = {
+      odr:
+        sellerHealth.orderDefectRate7dPct !== null && sellerHealth.orderDefectRate30dPct !== null
+          ? sellerHealth.orderDefectRate7dPct - sellerHealth.orderDefectRate30dPct
+          : null,
+      lsr:
+        sellerHealth.lateShipmentRate7dPct !== null && sellerHealth.lateShipmentRate30dPct !== null
+          ? sellerHealth.lateShipmentRate7dPct - sellerHealth.lateShipmentRate30dPct
+          : null,
+      cancel:
+        sellerHealth.preFulfillmentCancelRate7dPct !== null &&
+        sellerHealth.preFulfillmentCancelRate30dPct !== null
+          ? sellerHealth.preFulfillmentCancelRate7dPct -
+            sellerHealth.preFulfillmentCancelRate30dPct
+          : null,
+    };
+
+    if (odr?.status === "warning" || odr?.status === "critical") {
+      actions.push("Retouren- und A-bis-z-Faelle reduzieren: Listing-Qualitaet, Produktbilder, Fit/Size-Hinweise priorisieren.");
+    }
+    if (lsr?.status === "warning" || lsr?.status === "critical") {
+      actions.push("Fulfillment-Prozesse straffen: Cut-off-Zeiten, Carrier-Pickup und Versand-SLA pro SKU pruefen.");
+    }
+    if (cancel?.status === "warning" || cancel?.status === "critical") {
+      actions.push("Stornierungen senken: Bestandsgenauigkeit, Reservierungslogik und Stock-Buffer fuer Top-SKUs anpassen.");
+    }
+    if (actions.length === 0) {
+      actions.push("Aktuelle Prozesse beibehalten und Trends taeglich monitoren, um frueh auf Ausreisser zu reagieren.");
+    }
+    if (unknownCount > 0) {
+      actions.push("Einige Health-Werte sind aktuell nicht verfuegbar. SP-API Berechtigungen/Scopes fuer Orders und Seller Participation pruefen.");
+    }
+
+    return {
+      checks: withStatus.map((check) => ({
+        ...check,
+        trendDeltaPct: trendById[check.id] ?? null,
+      })),
+      status,
+      headline,
+      actions,
+    };
+  }, [marketplace.id, sellerHealth]);
 
   return (
     <Stack spacing={2}>
@@ -259,63 +401,222 @@ export function MarketplaceSection({
           </Typography>
         </div>
         <Stack direction="row" spacing={1}>
-          <Chip label={`Health Score ${healthScore}`} color={healthScore > 70 ? "success" : healthScore > 45 ? "warning" : "error"} />
+          <Chip
+            label={`Health Score ${effectiveHealthScore}${marketplace.id === "amazon" && sellerHealth?.score !== null ? " (Amazon)" : ""}`}
+            color={effectiveHealthScore > 70 ? "success" : effectiveHealthScore > 45 ? "warning" : "error"}
+          />
+          {marketplace.id === "amazon" && sellerHealth ? (
+            <Chip
+              label={`ODR ${sellerHealth.orderDefectRatePct !== null ? `${sellerHealth.orderDefectRatePct.toFixed(2)}%` : "n/a"}`}
+              variant="outlined"
+            />
+          ) : null}
+          {marketplace.id === "amazon" && sellerHealth ? (
+            <Chip
+              label={`LSR ${sellerHealth.lateShipmentRatePct !== null ? `${sellerHealth.lateShipmentRatePct.toFixed(2)}%` : "n/a"}`}
+              variant="outlined"
+            />
+          ) : null}
+          {marketplace.id === "amazon" && sellerHealth ? (
+            <Chip
+              label={`Cancel ${sellerHealth.preFulfillmentCancelRatePct !== null ? `${sellerHealth.preFulfillmentCancelRatePct.toFixed(2)}%` : "n/a"}`}
+              variant="outlined"
+            />
+          ) : null}
           <Chip label={`Quelle: ${dataSource === "supabase" ? "Supabase Live" : "Mock"}`} color={dataSource === "supabase" ? "primary" : "default"} />
         </Stack>
       </Stack>
 
       {isLoading ? <Alert severity="info">Lade Marktplatzdaten...</Alert> : null}
       {liveFeedStatus ? <Alert severity="success">{liveFeedStatus}</Alert> : null}
+      {amazonHealthDetail ? (
+        <Card>
+          <CardContent>
+            <Stack spacing={1.2}>
+              <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1}>
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Amazon Account Health
+                </Typography>
+                <Chip
+                  size="small"
+                  color={amazonHealthDetail.status}
+                  label={amazonHealthDetail.headline}
+                />
+              </Stack>
+              <Stack direction="row" flexWrap="wrap" useFlexGap gap={1}>
+                {amazonHealthDetail.checks.map((check) => (
+                  <Chip
+                    key={check.id}
+                    variant="outlined"
+                    color={
+                      check.status === "critical"
+                        ? "error"
+                        : check.status === "warning"
+                          ? "warning"
+                          : check.status === "unknown"
+                            ? "default"
+                            : "success"
+                    }
+                    label={`${check.label}: ${check.value === null ? "n/a" : `${check.value.toFixed(2)}${check.unit}`} (Ziel < ${check.threshold}${check.unit}) · Trend ${
+                      check.trendDeltaPct === null
+                        ? "n/a"
+                        : `${check.trendDeltaPct > 0 ? "↑" : check.trendDeltaPct < 0 ? "↓" : "→"} ${check.trendDeltaPct > 0 ? "+" : ""}${check.trendDeltaPct.toFixed(2)}pp (7d vs 30d)`
+                    }`}
+                    sx={{
+                      color:
+                        check.trendDeltaPct === null
+                          ? "text.secondary"
+                          : check.trendDeltaPct > 0
+                            ? "error.main"
+                            : check.trendDeltaPct < 0
+                              ? "success.main"
+                              : "text.primary",
+                      borderColor:
+                        check.trendDeltaPct === null
+                          ? "divider"
+                          : check.trendDeltaPct > 0
+                            ? "error.light"
+                            : check.trendDeltaPct < 0
+                              ? "success.light"
+                              : "divider",
+                    }}
+                  />
+                ))}
+              </Stack>
+              <Stack spacing={0.4}>
+                {amazonHealthDetail.actions.map((action) => (
+                  <Typography key={action} variant="body2" color="text.secondary">
+                    • {action}
+                  </Typography>
+                ))}
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Grid container spacing={1.5}>
+        {visibleKpiIds.includes("revenue") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Umsatz" value={formatCurrency(metrics.revenueCents)} />
+          <KpiCard
+            label="Umsatz"
+            value={formatCurrency(metrics.revenueCents)}
+            trendPct={metrics.revenueDeltaPct}
+            sparklineValues={revenueSparkline}
+          />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("orders") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Bestellungen" value={String(metrics.orders)} />
+          <KpiCard
+            label="Bestellungen"
+            value={String(metrics.orders)}
+            helper={`${pendingPaymentOrders} offene Zahlungen`}
+            sparklineValues={ordersSparkline}
+          />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("pendingPayments") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Nettoumsatz" value={formatCurrency(keptRevenueCents)} helper="nach Retouren" />
+          <KpiCard
+            label="Offene Zahlungen"
+            value={String(pendingPaymentOrders)}
+            helper="Klicken, um offene Bestellungen zu sehen"
+            onClick={onOpenPendingPayments}
+            sparklineValues={ordersSparkline}
+          />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("netRevenue") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Retourenquote" value={formatPercent(metrics.returnRate)} helper={`${metrics.returnedOrders} Retouren`} />
+          <KpiCard
+            label="Nettoumsatz"
+            value={formatCurrency(keptRevenueCents)}
+            helper="nach Retouren"
+            trendPct={metrics.revenueDeltaPct - metrics.returnRate}
+            sparklineValues={revenueSparkline}
+          />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("returnsRate") ? (
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
+          <KpiCard
+            label="Retourenquote"
+            value={formatPercent(metrics.returnRate)}
+            helper={`${metrics.returnedOrders} Retouren`}
+            trendPct={-metrics.returnRate}
+            sparklineValues={hourlySparkline}
+          />
+        </Grid>
+        ) : null}
+        {visibleKpiIds.includes("aov") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
           <KpiCard label="AOV" value={formatCurrency(metrics.averageOrderValueCents)} />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("ordersPerDay") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Bestellungen/Tag" value={avgOrdersPerDay.toFixed(1)} />
+          <KpiCard label="Bestellungen/Tag" value={avgOrdersPerDay.toFixed(1)} sparklineValues={ordersSparkline} />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("previousPeriod") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Vorperiode" value={formatCurrency(metrics.previousRevenueCents)} helper={`Delta ${formatPercent(metrics.revenueDeltaPct)}`} />
+          <KpiCard
+            label="Vorperiode"
+            value={formatCurrency(metrics.previousRevenueCents)}
+            helper={`Delta ${formatPercent(metrics.revenueDeltaPct)}`}
+            trendPct={metrics.revenueDeltaPct}
+            sparklineValues={revenueSparkline}
+          />
         </Grid>
+        ) : null}
+        {visibleKpiIds.includes("topRegion") ? (
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-          <KpiCard label="Top-Region-Anteil" value={formatPercent(topLocationShare)} helper={topLocation ? topLocation.city : "Keine Daten"} />
+          <KpiCard
+            label="Top-Region-Anteil"
+            value={formatPercent(topLocationShare)}
+            helper={topLocation ? topLocation.city : "Keine Daten"}
+            sparklineValues={revenueSparkline}
+          />
         </Grid>
+        ) : null}
       </Grid>
 
       <Grid container spacing={1.5}>
+        {visibleChartIds.includes("salesTrend") ? (
         <Grid size={{ xs: 12, xl: 6 }}>
           <SalesTrendChart points={metrics.dailySales} />
         </Grid>
+        ) : null}
+        {visibleChartIds.includes("orderTrend") ? (
         <Grid size={{ xs: 12, xl: 6 }}>
           <OrderTrendChart points={metrics.dailySales} />
         </Grid>
+        ) : null}
+        {visibleChartIds.includes("returns") ? (
         <Grid size={{ xs: 12, md: 6, xl: 4 }}>
           <ReturnsChart orders={metrics.orders} returnedOrders={metrics.returnedOrders} returnRate={metrics.returnRate} />
         </Grid>
+        ) : null}
+        {visibleChartIds.includes("purchaseHeatmap") ? (
         <Grid size={{ xs: 12, md: 6, xl: 4 }}>
           <PurchaseTimeHeatmap points={metrics.hourlyPurchases} />
         </Grid>
+        ) : null}
+        {visibleChartIds.includes("locationRevenue") ? (
         <Grid size={{ xs: 12, md: 6, xl: 4 }}>
           <LocationRevenueChart points={metrics.locationBreakdown} />
         </Grid>
+        ) : null}
+        {visibleChartIds.includes("insights") ? (
         <Grid size={{ xs: 12 }}>
           <ActionInsights insights={decisions} />
         </Grid>
+        ) : null}
       </Grid>
-
-      <LocationBreakdown points={metrics.locationBreakdown} />
+      {visibleChartIds.includes("locationBreakdown") ? (
+        <LocationBreakdown points={metrics.locationBreakdown} />
+      ) : null}
     </Stack>
   );
 }
